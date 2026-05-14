@@ -29,8 +29,8 @@ const DT = 0.003;
 const SUBSTEPS = 3;
 const PARTICLE_R = 4;
 const DAMPING = 0.3;
-const MOUSE_RADIUS = 60;
-const MOUSE_FORCE = 8000;
+const MOUSE_RADIUS = 80;
+const MOUSE_FORCE = 25000;
 
 // 流体属性
 const WATER = 0, WAX = 1;
@@ -299,7 +299,6 @@ function applyMouseForce() {
   const mdx = mouseX - prevMouseX;
   const mdy = mouseY - prevMouseY;
   const mSpeed = Math.sqrt(mdx * mdx + mdy * mdy);
-  if (mSpeed < 0.5) return;
 
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
@@ -307,11 +306,31 @@ function applyMouseForce() {
     const dy = p.y - mouseY;
     const dist2 = dx * dx + dy * dy;
     if (dist2 > MOUSE_RADIUS * MOUSE_RADIUS) continue;
+    if (dist2 < 1) continue;
     const dist = Math.sqrt(dist2);
-    if (dist < 1) continue;
-    const factor = (1 - dist / MOUSE_RADIUS) * MOUSE_FORCE / p.density;
-    p.vx += mdx * factor * DT;
-    p.vy += mdy * factor * DT;
+    const falloff = 1 - dist / MOUSE_RADIUS; // 0~1, 越近越强
+    const invDensity = 1 / Math.max(p.density, 1);
+
+    // 1) 拖拽力：沿鼠标运动方向推动粒子
+    if (mSpeed > 0.5) {
+      const dragFactor = falloff * MOUSE_FORCE * invDensity * DT;
+      p.vx += mdx * dragFactor;
+      p.vy += mdy * dragFactor;
+    }
+
+    // 2) 旋涡力：鼠标按住时产生旋转推力
+    //    垂直于径向方向，形成搅拌旋涡
+    const nx = dx / dist;
+    const ny = dy / dist;
+    // 顺时针切线方向 (-ny, nx)
+    const vortexStrength = falloff * 6000 * invDensity * DT;
+    p.vx += -ny * vortexStrength;
+    p.vy +=  nx * vortexStrength;
+
+    // 3) 径向推力：向外推开粒子，形成搅动空洞
+    const pushStrength = falloff * falloff * 3000 * invDensity * DT;
+    p.vx += nx * pushStrength;
+    p.vy += ny * pushStrength;
   }
 }
 
@@ -398,11 +417,28 @@ function render(timestamp) {
 
   // 鼠标指示
   if (mouseDown) {
+    // 旋涡圈
     ctx.beginPath();
     ctx.arc(mouseX, mouseY, MOUSE_RADIUS, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    // 内圈
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, MOUSE_RADIUS * 0.4, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,200,100,0.25)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // 旋涡弧线
+    const t = timestamp * 0.005;
+    for (let a = 0; a < 3; a++) {
+      const startAngle = t + a * Math.PI * 2 / 3;
+      ctx.beginPath();
+      ctx.arc(mouseX, mouseY, MOUSE_RADIUS * 0.6, startAngle, startAngle + 0.8);
+      ctx.strokeStyle = 'rgba(255,200,100,0.3)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
   }
 
   requestAnimationFrame(render);
