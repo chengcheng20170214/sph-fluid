@@ -368,10 +368,43 @@ function drawParticles() {
     const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
     const brightness = Math.min(1, 0.6 + speed / 400);
 
+    // 搅拌染色：被鼠标搅动的粒子混入金色高光
+    let r = c[0] * brightness;
+    let g = c[1] * brightness;
+    let b = c[2] * brightness;
+    let alpha = 0.85;
+
+    if (mouseDown) {
+      const dx = p.x - mouseX;
+      const dy = p.y - mouseY;
+      const dist2 = dx * dx + dy * dy;
+      const mr2 = MOUSE_RADIUS * MOUSE_RADIUS;
+      if (dist2 < mr2) {
+        const blend = (1 - Math.sqrt(dist2) / MOUSE_RADIUS); // 0~1
+        const stir = Math.min(1, blend * 1.5); // 搅拌强度
+        const speedBoost = Math.min(1, speed / 200); // 速度越快越亮
+        const mix = stir * 0.6 + speedBoost * 0.4; // 综合
+        // 向金色 (255, 220, 80) 混合
+        r = r + (255 - r) * mix * 0.5;
+        g = g + (220 - g) * mix * 0.4;
+        b = b * (1 - mix * 0.6); // 压暗蓝色通道，偏暖
+        alpha = 0.85 + mix * 0.15;
+      }
+    }
+
     ctx.beginPath();
     ctx.arc(p.x, p.y, PARTICLE_R, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${c[0] * brightness | 0}, ${c[1] * brightness | 0}, ${c[2] * brightness | 0}, 0.85)`;
+    ctx.fillStyle = `rgba(${r | 0}, ${g | 0}, ${b | 0}, ${alpha.toFixed(2)})`;
     ctx.fill();
+
+    // 高速粒子发光拖尾
+    if (speed > 150) {
+      const glowAlpha = Math.min(0.35, (speed - 150) / 800);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, PARTICLE_R * 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 220, 100, ${glowAlpha.toFixed(2)})`;
+      ctx.fill();
+    }
   }
 }
 
