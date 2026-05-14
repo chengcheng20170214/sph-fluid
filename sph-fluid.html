@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>SPH 粒子流体模拟</title>
+<style>
+*{margin:0;padding:0}
+body{background:#111;overflow:hidden;display:flex;justify-content:center;align-items:center;height:100vh;font-family:monospace}
+canvas{border-radius:8px;box-shadow:0 0 30px rgba(0,100,255,0.3)}
+#info{position:fixed;top:10px;left:10px;color:#aaa;font-size:12px;line-height:1.6;pointer-events:none}
+#info span{color:#fff}
+</style>
+</head>
+<body>
+<div id="info">
+  <span>SPH 流体模拟</span><br>
+  水滴(蓝) · 蜡液(橙)<br>
+  鼠标按住拖动搅拌
+</div>
+<canvas id="c"></canvas>
+<script>
+// ============ 配置 ============
+const W = 900, H = 700;
+const CX = W / 2, CY = H * 0.82; // 碗中心
+const BR = 320; // 碗半径
+const GRAVITY = 600;
+const H_RADIUS = 22; // 平滑核半径
+const DT = 0.003;
+const SUBSTEPS = 3;
+const PARTICLE_R = 4;
+const DAMPING = 0.3;
+const MOUSE_RADIUS = 60;
+const MOUSE_FORCE = 8000;
+
+// 流体属性
+const WATER = 0, WAX = 1;
+const FLUID_PROPS = [
+  { name: 'water', restDensity: 1020, stiffness: 4000, viscosity: 80,  color: [60, 140, 255] },
+  { name: 'wax',   restDensity: 580,  stiffness: 3000, viscosity: 500, color: [255, 160, 40]  },
+];
+
+// ============ Canvas ============
+const canvas = document.getElementById('c');
+canvas.width = W; canvas.height = H;
+const ctx = canvas.getContext('2d');
+
+// ============ 粒子 ============
+const particles = [];
+
+function createParticles() {
+  // 水 — 左半碗底部
+  for (let i = 0; i < 280; i++) {
+    const angle = Math.PI + Math.random() * Math.PI;
+    const r = Math.random() * BR * 0.55;
+    const x = CX + Math.cos(angle) * r * 0.6 - 30;
+    const y = CY - 20 + Math.random() * 120 - r * 0.3;
+    particles.push({
+      x, y, vx: 0, vy: 0,
+      fx: 0, fy: 0,
+      density: 0, pressure: 0,
+      type: WATER, mass: 1
+    });
+  }
+  // 蜡 — 右半碗底部
+  for (let i = 0; i < 280; i++) {
+    const angle = Math.PI + Math.random() * Math.PI;
+    const r = Math.random() * BR * 0.55;
+    const x = CX + Math.cos(angle) * r * 0.6 + 30;
+    const y = CY - 20 + Math.random() * 120 - r * 0.3;
+    particles.push({
+      x, y, vx: 0, vy: 0,
+      fx: 0, fy: 0,
+      density: 0, pressure: 0,
+      type: WAX, mass: 0.6
+    });
+  }
+}
+
+// ============ 空间哈希 ============
+const GRID_SIZE = H_RADIUS;
+let grid = {};
+let gridCols = Math.ceil(W / GRID_SIZE);
+
+function hashKey(x, y) {
+  const gx = Math.floor(x / GRID_SIZE);
+  const gy = Math.floor(y / GRID_SIZE);
+  return gx + gy * gridCols;
+}
+
+function buildGrid() {
+  grid = {};
+  for (let i = 0; i < particles.length; i++) {
+    const key = hashKey(particles[i].x, particles[i].y);
+    if (!grid[key]) grid[key] = [];
+    grid[key].push(i);
+  }
+}
+
+function getNeighbors(i) {
+  const p = particles[i];
+  const gx = Math.floor(p.x / GRID_SIZE);
+  const gy = Math.floor(p.y / GRID_SIZE);
+  const result = [];
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const key = (gx + dx) + (gy + dy) * gridCols;
+      const cell = grid[key];
+      if (cell) {
+        for (let j = 0; j < cell.length; j++) {
+          if (cell[j] !== i) result.push(cell[j]);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+// ============ SPH 核函数 ============
+const H2 = H_RADIUS * H_RADIUS;
+const POLY6_COEFF = 315.0 / (64.0 * Math.PI * Math.pow(H_RADIUS, 9));
+const SPIKY_COEFF = -45.0 / (Math.PI * Math.pow(H_RADIUS, 6));
+const VISC_COEFF = 45.0 / (Math.PI * Math.pow(H_RADIUS, 6));
+
+function poly6(r2) {
+  if (r2 >= H2) return 0;
+  const diff = H2 - r2;
+  return POLY6_COEFF * diff * diff * diff;
+}
+
+function spikyGrad(r) {
+  if (r >= H_RADIUS || r < 0.001) return 0;
+  const diff = H_RADIUS - r;
+  return SPIKY_COEFF * diff * diff;
+}
+
+function viscLaplacian(r) {
+  if (r >= H_RADIUS) return 0;
+  return VISC_COEFF * (H_RADIUS - r);
+}
+
+// ============ 物理模拟 ============
+function computeDensityPressure() {
+  for (let i = 0; i < particles.length; i++) {
+    const pi = particles[i];
+    pi.density = 0;
+    const neighbors = getNeighbors(i);
+    for (let n = 0; n < neighbors.length; n++) {
+      const j = neighbors[n];
+      const pj = particles[j];
+      const dx = pj.x - pi.x;
+      const dy = pj.y - pi.y;
+      const r2 = dx * dx + dy * dy;
+      pi.density += pj.mass * poly6(r2);
+    }
+    // 自身
+    pi.density += pi.mass * poly6(0);
+    // 密度下限
+    if (pi.density < 1) pi.density = 1;
+    const props = FLUID_PROPS[pi.type];
+    pi.pressure = props.stiffness * (pi.density - props.restDensity);
+  }
+}
+
+function computeForces() {
+  for (let i = 0; i < particles.length; i++) {
+    const pi = particles[i];
+    pi.fx = 0;
+    pi.fy = GRAVITY * pi.density; // 重力
+    const neighbors = getNeighbors(i);
+    for (let n = 0; n < neighbors.length; n++) {
+      const j = neighbors[n];
+      const pj = particles[j];
+      const dx = pj.x - pi.x;
+      const dy = pj.y - pi.y;
+      const r2 = dx * dx + dy * dy;
+      if (r2 >= H2 || r2 < 0.0001) continue;
+      const r = Math.sqrt(r2);
+      // 压力力
+      const pressureTerm = -(pi.mass) * (pi.pressure + pj.pressure) / (2 * pj.density);
+      const grad = spikyGrad(r);
+      const rx = dx / r;
+      const ry = dy / r;
+      pi.fx += pressureTerm * grad * rx;
+      pi.fy += pressureTerm * grad * ry;
+      // 粘性力 — 取两种流体中较大的粘度
+      const mu = Math.max(FLUID_PROPS[pi.type].viscosity, FLUID_PROPS[pj.type].viscosity);
+      const visc = mu * pj.mass * viscLaplacian(r) / pj.density;
+      pi.fx += visc * (pj.vx - pi.vx);
+      pi.fy += visc * (pj.vy - pi.vy);
+    }
+  }
+}
+
+function integrate(dt) {
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    // 加速度
+    const ax = p.fx / p.density;
+    const ay = p.fy / p.density;
+    p.vx += ax * dt;
+    p.vy += ay * dt;
+    // 速度阻尼
+    const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (speed > 800) {
+      p.vx = p.vx / speed * 800;
+      p.vy = p.vy / speed * 800;
+    }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+}
+
+// ============ 边界：半圆碗 ============
+function enforceBoundary() {
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    // 碗内部约束：粒子必须在碗的半圆内
+    const dx = p.x - CX;
+    const dy = p.y - CY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // 只考虑下半圆（y >= CY 的区域是碗壁）
+    if (dy > 0) {
+      // 在碗中心下方，检查是否超出碗壁
+      if (dist > BR - PARTICLE_R) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        p.x = CX + nx * (BR - PARTICLE_R);
+        p.y = CY + ny * (BR - PARTICLE_R);
+        // 反射速度
+        const vn = p.vx * nx + p.vy * ny;
+        if (vn > 0) {
+          p.vx -= (1 + DAMPING) * vn * nx;
+          p.vy -= (1 + DAMPING) * vn * ny;
+        }
+      }
+    } else {
+      // 在碗口上方：检查是否超出碗壁半圆
+      // 碗壁是半圆，开口朝上，所以上方没有壁
+      // 但如果粒子飞出碗的水平范围，需要反弹回来
+      if (dist > BR - PARTICLE_R) {
+        // 检查是否在碗壁圆弧范围外
+        const nx = dx / dist;
+        const ny = dy / dist;
+        p.x = CX + nx * (BR - PARTICLE_R);
+        p.y = CY + ny * (BR - PARTICLE_R);
+        const vn = p.vx * nx + p.vy * ny;
+        if (vn > 0) {
+          p.vx -= (1 + DAMPING) * vn * nx;
+          p.vy -= (1 + DAMPING) * vn * ny;
+        }
+      }
+    }
+
+    // 画布边界
+    if (p.x < PARTICLE_R) { p.x = PARTICLE_R; p.vx *= -DAMPING; }
+    if (p.x > W - PARTICLE_R) { p.x = W - PARTICLE_R; p.vx *= -DAMPING; }
+    if (p.y < PARTICLE_R) { p.y = PARTICLE_R; p.vy *= -DAMPING; }
+    if (p.y > H - PARTICLE_R) { p.y = H - PARTICLE_R; p.vy *= -DAMPING; }
+  }
+}
+
+// ============ 鼠标交互 ============
+let mouseX = 0, mouseY = 0, mouseDown = false;
+let prevMouseX = 0, prevMouseY = 0;
+
+canvas.addEventListener('mousedown', (e) => {
+  mouseDown = true;
+  const rect = canvas.getBoundingClientRect();
+  prevMouseX = mouseX = (e.clientX - rect.left) * (W / rect.width);
+  prevMouseY = mouseY = (e.clientY - rect.top) * (H / rect.height);
+});
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  prevMouseX = mouseX;
+  prevMouseY = mouseY;
+  mouseX = (e.clientX - rect.left) * (W / rect.width);
+  mouseY = (e.clientY - rect.top) * (H / rect.height);
+});
+canvas.addEventListener('mouseup', () => { mouseDown = false; });
+canvas.addEventListener('mouseleave', () => { mouseDown = false; });
+
+// 触摸支持
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  mouseDown = true;
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  prevMouseX = mouseX = (t.clientX - rect.left) * (W / rect.width);
+  prevMouseY = mouseY = (t.clientY - rect.top) * (H / rect.height);
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const t = e.touches[0];
+  prevMouseX = mouseX;
+  prevMouseY = mouseY;
+  mouseX = (t.clientX - rect.left) * (W / rect.width);
+  mouseY = (t.clientY - rect.top) * (H / rect.height);
+}, { passive: false });
+canvas.addEventListener('touchend', () => { mouseDown = false; });
+
+function applyMouseForce() {
+  if (!mouseDown) return;
+  const mdx = mouseX - prevMouseX;
+  const mdy = mouseY - prevMouseY;
+  const mSpeed = Math.sqrt(mdx * mdx + mdy * mdy);
+  if (mSpeed < 0.5) return;
+
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const dx = p.x - mouseX;
+    const dy = p.y - mouseY;
+    const dist2 = dx * dx + dy * dy;
+    if (dist2 > MOUSE_RADIUS * MOUSE_RADIUS) continue;
+    const dist = Math.sqrt(dist2);
+    if (dist < 1) continue;
+    const factor = (1 - dist / MOUSE_RADIUS) * MOUSE_FORCE / p.density;
+    p.vx += mdx * factor * DT;
+    p.vy += mdy * factor * DT;
+  }
+}
+
+// ============ 渲染 ============
+function drawBowl() {
+  ctx.save();
+  // 碗壁 — 半圆弧
+  ctx.beginPath();
+  ctx.arc(CX, CY, BR, Math.PI, 2 * Math.PI, false);
+  ctx.strokeStyle = 'rgba(150, 180, 220, 0.6)';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  // 碗壁内发光
+  ctx.beginPath();
+  ctx.arc(CX, CY, BR - 2, Math.PI, 2 * Math.PI, false);
+  ctx.strokeStyle = 'rgba(100, 150, 255, 0.15)';
+  ctx.lineWidth = 8;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawParticles() {
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const c = FLUID_PROPS[p.type].color;
+    const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    const brightness = Math.min(1, 0.6 + speed / 400);
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, PARTICLE_R, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${c[0] * brightness | 0}, ${c[1] * brightness | 0}, ${c[2] * brightness | 0}, 0.85)`;
+    ctx.fill();
+  }
+}
+
+// ============ 主循环 ============
+let lastTime = 0;
+let fpsArr = [];
+
+function step() {
+  buildGrid();
+  computeDensityPressure();
+  computeForces();
+  applyMouseForce();
+  for (let s = 0; s < SUBSTEPS; s++) {
+    integrate(DT);
+    enforceBoundary();
+  }
+}
+
+function render(timestamp) {
+  // FPS 计算
+  if (lastTime) {
+    const dt = timestamp - lastTime;
+    fpsArr.push(1000 / dt);
+    if (fpsArr.length > 30) fpsArr.shift();
+  }
+  lastTime = timestamp;
+
+  // 物理步进
+  step();
+
+  // 绘制
+  ctx.fillStyle = '#0a0e1a';
+  ctx.fillRect(0, 0, W, H);
+
+  drawBowl();
+  drawParticles();
+
+  // FPS 显示
+  const avgFps = fpsArr.length ? (fpsArr.reduce((a, b) => a + b) / fpsArr.length) : 0;
+  ctx.fillStyle = '#666';
+  ctx.font = '12px monospace';
+  ctx.fillText(`FPS: ${avgFps.toFixed(0)} | Particles: ${particles.length}`, 10, H - 10);
+
+  // 鼠标指示
+  if (mouseDown) {
+    ctx.beginPath();
+    ctx.arc(mouseX, mouseY, MOUSE_RADIUS, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  requestAnimationFrame(render);
+}
+
+// ============ 启动 ============
+createParticles();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
