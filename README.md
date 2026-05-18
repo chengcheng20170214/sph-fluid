@@ -1,16 +1,31 @@
 # SPH 粒子流体模拟
 
-零依赖、单文件 HTML 的 SPH（Smoothed Particle Hydrodynamics）粒子流体模拟。
+零依赖 SPH（Smoothed Particle Hydrodynamics）粒子流体模拟，提供 HTML 和 Python 两个版本。
 
 ## 特性
 
 - 🖱️ 鼠标按住拖动搅拌（旋涡力 + 径向推力 + 拖拽力）
-- ⚙️ 控制面板：粒子大小滑块、流体颜色选择、可折叠
+- ⚙️ 控制面板：粒子大小滑块、粘度滑块、颜色选择
 - 📊 算法面板：6 步 SPH 求解过程实时展示
 - 🎨 搅拌染色：被搅动的粒子混入金色高光，高速粒子发光拖尾
 - 🔮 密封球体容器（360° 反射边界）
+- 🧪 可调粘度：从水（低粘度）到蜂蜜/熔岩（高粘度）实时切换
+
+## 两个版本
+
+| | HTML 版 | Python 版 |
+|---|---|---|
+| 文件 | `sph-fluid.html` | `sph-fluid.py` |
+| 渲染 | Canvas 2D | tkinter Canvas |
+| 粒子数 | 560 | 300 |
+| 帧率 | 30+ FPS | 10~20 FPS |
+| 依赖 | 无（浏览器直接运行） | 无（tkinter 内置） |
+| 交互 | 鼠标/触摸 | 鼠标拖动 |
+| 搅拌染色 | ✅ 金色高光+发光拖尾 | 速度亮度映射 |
 
 ## 使用
+
+### HTML 版
 
 双击 `sph-fluid.html` 即可在浏览器中运行。
 
@@ -20,6 +35,14 @@
 python -m http.server 8000
 # 然后访问 http://localhost:8000/sph-fluid.html
 ```
+
+### Python 版
+
+```bash
+python sph-fluid.py
+```
+
+无需安装任何第三方库，tkinter 为 Python 内置模块。
 
 ## 算法步骤展示
 
@@ -34,8 +57,6 @@ python -m http.server 8000
 | ⑤ 加速度·积分 | 最大加速度 \|a\|、最大/平均速度 \|v\|、有效时间步 |
 | ⑥ 边界约束 | 碰撞粒子数、最大反射速度、阻尼系数 |
 
-当前执行步骤蓝色高亮，数值异常自动标注（🔴危险 🟡警告 🟢正常）。
-
 ## 技术实现
 
 | 模块 | 实现 |
@@ -44,12 +65,11 @@ python -m http.server 8000
 | 邻居搜索 | 空间哈希网格 (Cell-Linked List) O(n) |
 | 积分 | 子步进（每帧 3 次），速度限幅 800 |
 | 边界 | 密封球体 360° 法线反射 + 速度阻尼 |
-| 交互 | 鼠标旋涡力 + 径向推力 + 拖拽力，搅拌染色效果 |
-| 渲染 | 速度亮度映射 + 近鼠标金色高光 + 高速发光拖尾 |
-| 面板 | 粒子大小/颜色控制 + 算法步骤实时数据展示 |
+| 交互 | 鼠标旋涡力 + 径向推力 + 拖拽力 |
+| 粘度控制 | 实时滑块调节（5~600），影响流体运动特性 |
 
 ## 多智能体协作
 
 本项目由 QwenPaw Coder Agent 与 OpenCode Agent 通过 ACP（Agent Client Protocol）协作完成：
-- Coder Agent：物理引擎、SPH 核心、边界系统、搅拌交互
+- Coder Agent：物理引擎、SPH 核心、边界系统、搅拌交互、Python 版本
 - OpenCode Agent（ACP）：粒子大小控制面板
