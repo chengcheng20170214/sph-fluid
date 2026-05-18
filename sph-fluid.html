@@ -9,7 +9,7 @@ body{background:#111;overflow:hidden;display:flex;justify-content:center;align-i
 canvas{border-radius:8px;box-shadow:0 0 30px rgba(0,100,255,0.3)}
 #info{position:fixed;top:10px;left:10px;color:#aaa;font-size:12px;line-height:1.6;pointer-events:none}
 #info span{color:#fff}
-#panel{position:fixed;top:10px;right:10px;background:rgba(10,14,26,0.75);border-radius:8px;padding:12px 16px;color:#ccc;font-size:12px;min-width:140px;user-select:none;backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.08)}
+#panel{position:fixed;top:10px;right:10px;background:rgba(10,14,26,0.75);border-radius:8px;padding:12px 16px;color:#ccc;font-size:12px;min-width:140px;user-select:none;backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.08);z-index:10}
 #panel .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:pointer}
 #panel .header .title{color:#8af;font-weight:bold;font-size:13px}
 #panel .header .toggle{color:#666;font-size:14px;line-height:1}
@@ -19,6 +19,15 @@ canvas{border-radius:8px;box-shadow:0 0 30px rgba(0,100,255,0.3)}
 #panel .row label{color:#999}
 #panel .row .val{color:#fff;font-weight:bold;min-width:24px;text-align:right}
 #panel input[type=range]{width:100%;margin:4px 0;accent-color:#48f;background:transparent;cursor:pointer;height:4px}
+#algo{position:fixed;bottom:0;left:0;right:0;background:rgba(6,8,18,0.88);border-top:1px solid rgba(80,120,200,0.25);padding:8px 14px;font-size:11px;color:#8ca;line-height:1.5;font-family:'Courier New',monospace;z-index:10;backdrop-filter:blur(8px);display:flex;gap:12px;overflow-x:auto}
+#algo .step{flex:0 0 auto;min-width:170px;padding:6px 10px;border-radius:6px;border:1px solid rgba(80,120,200,0.15);background:rgba(20,30,60,0.5)}
+#algo .step.active{border-color:rgba(80,180,255,0.6);background:rgba(20,40,80,0.7);box-shadow:0 0 12px rgba(80,160,255,0.15)}
+#algo .step .stitle{color:#6bf;font-weight:bold;margin-bottom:3px;font-size:11px}
+#algo .step .sline{color:#7a8a9a;white-space:nowrap}
+#algo .step .sline b{color:#cde;font-weight:normal}
+#algo .step .sline .warn{color:#fa4}
+#algo .step .sline .good{color:#4f8}
+#algo .step .sline .hot{color:#f84}
 .color-row{display:flex;justify-content:space-between;align-items:center;margin-top:2px}
 .color-row label{color:#999}
 .color-row input[type=color]{width:26px;height:26px;border:2px solid rgba(255,255,255,0.2);border-radius:5px;cursor:pointer;padding:0;background:0;vertical-align:middle}
@@ -53,10 +62,18 @@ canvas{border-radius:8px;box-shadow:0 0 30px rgba(0,100,255,0.3)}
     </div>
   </div>
 </div>
+<div id="algo">
+  <div class="step" id="s0"><div class="stitle">① 粒子初始化</div><div class="sline">—</div></div>
+  <div class="step" id="s1"><div class="stitle">② 近邻搜索 (Grid)</div><div class="sline">—</div></div>
+  <div class="step" id="s2"><div class="stitle">③ 密度·压力</div><div class="sline">—</div></div>
+  <div class="step" id="s3"><div class="stitle">④ 压力·粘性力</div><div class="sline">—</div></div>
+  <div class="step" id="s4"><div class="stitle">⑤ 加速度·积分</div><div class="sline">—</div></div>
+  <div class="step" id="s5"><div class="stitle">⑥ 边界约束</div><div class="sline">—</div></div>
+</div>
 <canvas id="c"></canvas>
 <script>
 // ============ 配置 ============
-const W = 900, H = 700;
+const W = 900, H = 640;
 const CX = W / 2, CY = H / 2; // 球体中心
 const BR = 300; // 球体半径
 const GRAVITY = 600;
@@ -83,6 +100,84 @@ const ctx = canvas.getContext('2d');
 
 // ============ 粒子 ============
 const particles = [];
+
+// ============ 算法统计面板 ============
+const stats = {
+  activeStep: -1,       // 当前正在执行的步骤
+  stepTimes: [0,0,0,0,0,0], // 各步骤耗时 ms
+  // Step 0: 初始化
+  init: { waterCount: 0, waxCount: 0, totalMass: 0 },
+  // Step 1: 近邻搜索
+  grid: { cellSize: 0, cells: 0, avgNeighbors: 0, maxNeighbors: 0, buildTime: 0 },
+  // Step 2: 密度·压力
+  density: { minDensity: 0, maxDensity: 0, avgDensity: 0, minPressure: 0, maxPressure: 0 },
+  // Step 3: 力
+  forces: { maxPressureForce: 0, maxViscForce: 0, maxGravityForce: 0, totalForce: 0 },
+  // Step 4: 积分
+  integrate: { maxAccel: 0, maxVel: 0, avgVel: 0 },
+  // Step 5: 边界
+  boundary: { collisions: 0, maxReflect: 0 },
+  // 全局
+  frameTime: 0, fps: 0,
+};
+
+function setActiveStep(n) {
+  stats.activeStep = n;
+}
+
+function updateAlgoPanel() {
+  // Step 0: 初始化
+  const s0 = document.getElementById('s0');
+  s0.className = 'step' + (stats.activeStep === 0 ? ' active' : '');
+  s0.querySelector('.sline').innerHTML =
+    `水: <b>${stats.init.waterCount}</b>  蜡: <b>${stats.init.waxCount}</b><br>` +
+    `h=<b>${H_RADIUS}</b> dt=<b>${DT}</b> sub=<b>${SUBSTEPS}</b><br>` +
+    `ρ₀水=<b>${FLUID_PROPS[0].restDensity}</b> ρ₀蜡=<b>${FLUID_PROPS[1].restDensity}</b>`;
+
+  // Step 1: 近邻搜索
+  const s1 = document.getElementById('s1');
+  s1.className = 'step' + (stats.activeStep === 1 ? ' active' : '');
+  const g = stats.grid;
+  s1.querySelector('.sline').innerHTML =
+    `Cell=<b>${g.cellSize}</b>  活跃格=<b>${g.cells}</b><br>` +
+    `平均邻居=<b>${g.avgNeighbors}</b> 最大=<b>${g.maxNeighbors}</b><br>` +
+    `构建耗时=<b>${g.buildTime.toFixed(1)}</b>ms`;
+
+  // Step 2: 密度·压力
+  const s2 = document.getElementById('s2');
+  s2.className = 'step' + (stats.activeStep === 2 ? ' active' : '');
+  const d = stats.density;
+  s2.querySelector('.sline').innerHTML =
+    `ρ ∈ [<b>${d.minDensity.toFixed(0)}</b>, <span class="${d.maxDensity > 2000 ? 'warn' : 'good'}"><b>${d.maxDensity.toFixed(0)}</b></span>]<br>` +
+    `ρ̄=<b>${d.avgDensity.toFixed(0)}</b>  P ∈ [<b>${d.minPressure.toFixed(0)}</b>, <span class="hot"><b>${d.maxPressure.toFixed(0)}</b></span>]`;
+
+  // Step 3: 力
+  const s3 = document.getElementById('s3');
+  s3.className = 'step' + (stats.activeStep === 3 ? ' active' : '');
+  const f = stats.forces;
+  s3.querySelector('.sline').innerHTML =
+    `|F压力|<sub>max</sub>=<span class="hot"><b>${f.maxPressureForce.toFixed(0)}</b></span><br>` +
+    `|F粘性|<sub>max</sub>=<b>${f.maxViscForce.toFixed(0)}</b><br>` +
+    `|F重力|=<b>${f.maxGravityForce.toFixed(0)}</b>`;
+
+  // Step 4: 积分
+  const s4 = document.getElementById('s4');
+  s4.className = 'step' + (stats.activeStep === 4 ? ' active' : '');
+  const it = stats.integrate;
+  s4.querySelector('.sline').innerHTML =
+    `|a|<sub>max</sub>=<span class="hot"><b>${it.maxAccel.toFixed(0)}</b></span><br>` +
+    `|v|<sub>max</sub>=<span class="${it.maxVel > 500 ? 'warn' : 'good'}"><b>${it.maxVel.toFixed(0)}</b></span>  |v|̄=<b>${it.avgVel.toFixed(1)}</b><br>` +
+    `dt×sub=<b>${(DT * SUBSTEPS).toFixed(4)}</b>s`;
+
+  // Step 5: 边界
+  const s5 = document.getElementById('s5');
+  s5.className = 'step' + (stats.activeStep === 5 ? ' active' : '');
+  const b = stats.boundary;
+  s5.querySelector('.sline').innerHTML =
+    `碰撞粒子=<b>${b.collisions}</b><br>` +
+    `最大反射速度=<b>${b.maxReflect.toFixed(1)}</b><br>` +
+    `damping=<b>${DAMPING}</b>`;
+}
 
 function createParticles() {
   // 水 — 球体左半部分
@@ -111,6 +206,9 @@ function createParticles() {
       type: WAX, mass: 0.6
     });
   }
+  setActiveStep(0);
+  stats.init.waterCount = 280;
+  stats.init.waxCount = 280;
 }
 
 // ============ 空间哈希 ============
@@ -125,12 +223,17 @@ function hashKey(x, y) {
 }
 
 function buildGrid() {
+  setActiveStep(1);
+  const t0 = performance.now();
   grid = {};
   for (let i = 0; i < particles.length; i++) {
     const key = hashKey(particles[i].x, particles[i].y);
     if (!grid[key]) grid[key] = [];
     grid[key].push(i);
   }
+  stats.grid.cellSize = GRID_SIZE;
+  stats.grid.cells = Object.keys(grid).length;
+  stats.grid.buildTime = performance.now() - t0;
 }
 
 function getNeighbors(i) {
@@ -177,10 +280,16 @@ function viscLaplacian(r) {
 
 // ============ 物理模拟 ============
 function computeDensityPressure() {
+  setActiveStep(2);
+  let minD = Infinity, maxD = 0, sumD = 0, minP = Infinity, maxP = 0;
+  let totalN = 0, maxN = 0;
   for (let i = 0; i < particles.length; i++) {
     const pi = particles[i];
     pi.density = 0;
     const neighbors = getNeighbors(i);
+    const nCount = neighbors.length;
+    totalN += nCount;
+    if (nCount > maxN) maxN = nCount;
     for (let n = 0; n < neighbors.length; n++) {
       const j = neighbors[n];
       const pj = particles[j];
@@ -195,15 +304,33 @@ function computeDensityPressure() {
     if (pi.density < 1) pi.density = 1;
     const props = FLUID_PROPS[pi.type];
     pi.pressure = props.stiffness * (pi.density - props.restDensity);
+    // 统计
+    if (pi.density < minD) minD = pi.density;
+    if (pi.density > maxD) maxD = pi.density;
+    sumD += pi.density;
+    if (pi.pressure < minP) minP = pi.pressure;
+    if (pi.pressure > maxP) maxP = pi.pressure;
   }
+  stats.grid.avgNeighbors = (totalN / particles.length).toFixed(1);
+  stats.grid.maxNeighbors = maxN;
+  stats.density.minDensity = minD;
+  stats.density.maxDensity = maxD;
+  stats.density.avgDensity = sumD / particles.length;
+  stats.density.minPressure = minP;
+  stats.density.maxPressure = maxP;
 }
 
 function computeForces() {
+  setActiveStep(3);
+  let maxPF = 0, maxVF = 0, maxGF = 0;
   for (let i = 0; i < particles.length; i++) {
     const pi = particles[i];
     pi.fx = 0;
-    pi.fy = GRAVITY * pi.density; // 重力
+    const gravF = GRAVITY * pi.density;
+    pi.fy = gravF;
+    if (gravF > maxGF) maxGF = gravF;
     const neighbors = getNeighbors(i);
+    let pfx = 0, pfy = 0, vfx = 0, vfy = 0;
     for (let n = 0; n < neighbors.length; n++) {
       const j = neighbors[n];
       const pj = particles[j];
@@ -217,27 +344,42 @@ function computeForces() {
       const grad = spikyGrad(r);
       const rx = dx / r;
       const ry = dy / r;
-      pi.fx += pressureTerm * grad * rx;
-      pi.fy += pressureTerm * grad * ry;
+      pfx += pressureTerm * grad * rx;
+      pfy += pressureTerm * grad * ry;
       // 粘性力 — 取两种流体中较大的粘度
       const mu = Math.max(FLUID_PROPS[pi.type].viscosity, FLUID_PROPS[pj.type].viscosity);
       const visc = mu * pj.mass * viscLaplacian(r) / pj.density;
-      pi.fx += visc * (pj.vx - pi.vx);
-      pi.fy += visc * (pj.vy - pi.vy);
+      vfx += visc * (pj.vx - pi.vx);
+      vfy += visc * (pj.vy - pi.vy);
     }
+    pi.fx += pfx + vfx;
+    pi.fy += pfy + vfy;
+    const pForce = Math.sqrt(pfx * pfx + pfy * pfy);
+    const vForce = Math.sqrt(vfx * vfx + vfy * vfy);
+    if (pForce > maxPF) maxPF = pForce;
+    if (vForce > maxVF) maxVF = vForce;
   }
+  stats.forces.maxPressureForce = maxPF;
+  stats.forces.maxViscForce = maxVF;
+  stats.forces.maxGravityForce = maxGF;
 }
 
 function integrate(dt) {
+  setActiveStep(4);
+  let maxA = 0, maxV = 0, sumV = 0;
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
-    // 加速度
+    // 加速度 a = F / ρ
     const ax = p.fx / p.density;
     const ay = p.fy / p.density;
+    const accel = Math.sqrt(ax * ax + ay * ay);
+    if (accel > maxA) maxA = accel;
     p.vx += ax * dt;
     p.vy += ay * dt;
     // 速度阻尼
     const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (speed > maxV) maxV = speed;
+    sumV += speed;
     if (speed > 800) {
       p.vx = p.vx / speed * 800;
       p.vy = p.vy / speed * 800;
@@ -245,11 +387,16 @@ function integrate(dt) {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
   }
+  stats.integrate.maxAccel = maxA;
+  stats.integrate.maxVel = maxV;
+  stats.integrate.avgVel = sumV / particles.length;
 }
 
 // ============ 边界：密封球体 ============
 // 粒子被约束在完整圆内，360° 反射
 function enforceBoundary() {
+  setActiveStep(5);
+  let collisions = 0, maxReflect = 0;
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
     const dx = p.x - CX;
@@ -258,6 +405,7 @@ function enforceBoundary() {
 
     // 超出球体边界则反射回内壁
     if (dist > BR - PARTICLE_R) {
+      collisions++;
       const nx = dx / Math.max(dist, 0.001);
       const ny = dy / Math.max(dist, 0.001);
       p.x = CX + nx * (BR - PARTICLE_R);
@@ -265,11 +413,15 @@ function enforceBoundary() {
       // 反射速度：沿法线反弹
       const vn = p.vx * nx + p.vy * ny;
       if (vn > 0) {
+        const reflectSpeed = Math.abs(vn);
+        if (reflectSpeed > maxReflect) maxReflect = reflectSpeed;
         p.vx -= (1 + DAMPING) * vn * nx;
         p.vy -= (1 + DAMPING) * vn * ny;
       }
     }
   }
+  stats.boundary.collisions = collisions;
+  stats.boundary.maxReflect = maxReflect;
 }
 
 // ============ 鼠标交互 ============
@@ -440,6 +592,7 @@ function step() {
   }
 }
 
+let frameCount = 0;
 function render(timestamp) {
   // FPS 计算
   if (lastTime) {
@@ -489,6 +642,12 @@ function render(timestamp) {
       ctx.lineWidth = 2;
       ctx.stroke();
     }
+  }
+
+  // 更新算法面板（每 3 帧更新一次减少开销）
+  frameCount++;
+  if (frameCount % 3 === 0) {
+    updateAlgoPanel();
   }
 
   requestAnimationFrame(render);
