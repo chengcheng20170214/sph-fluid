@@ -57,8 +57,8 @@ canvas{border-radius:8px;box-shadow:0 0 30px rgba(0,100,255,0.3)}
 <script>
 // ============ 配置 ============
 const W = 900, H = 700;
-const CX = W / 2, CY = H * 0.18; // 碗中心（半圆弧的圆心，在画面上方）
-const BR = 320; // 碗半径
+const CX = W / 2, CY = H / 2; // 球体中心
+const BR = 300; // 球体半径
 const GRAVITY = 600;
 const H_RADIUS = 22; // 平滑核半径
 const DT = 0.003;
@@ -85,12 +85,12 @@ const ctx = canvas.getContext('2d');
 const particles = [];
 
 function createParticles() {
-  // 水 — 左半碗中下部
+  // 水 — 球体左半部分
   for (let i = 0; i < 280; i++) {
-    const angle = Math.PI * 0.5 + Math.random() * Math.PI * 0.4;
-    const r = BR * 0.5 + Math.random() * BR * 0.4;
-    const x = CX + Math.cos(angle) * r * 0.5 - 40;
-    const y = CY + Math.sin(angle) * r * 0.6;
+    const angle = Math.PI * 0.5 + Math.random() * Math.PI;
+    const r = Math.random() * BR * 0.6;
+    const x = CX + Math.cos(angle) * r * 0.7 - 30;
+    const y = CY + Math.sin(angle) * r * 0.7;
     particles.push({
       x, y, vx: 0, vy: 0,
       fx: 0, fy: 0,
@@ -98,12 +98,12 @@ function createParticles() {
       type: WATER, mass: 1
     });
   }
-  // 蜡 — 右半碗中下部
+  // 蜡 — 球体右半部分
   for (let i = 0; i < 280; i++) {
-    const angle = Math.PI * 0.5 + Math.random() * Math.PI * 0.4;
-    const r = BR * 0.5 + Math.random() * BR * 0.4;
-    const x = CX + Math.cos(angle) * r * 0.5 + 40;
-    const y = CY + Math.sin(angle) * r * 0.6;
+    const angle = Math.PI * 1.5 + Math.random() * Math.PI;
+    const r = Math.random() * BR * 0.6;
+    const x = CX + Math.cos(angle) * r * 0.7 + 30;
+    const y = CY + Math.sin(angle) * r * 0.7;
     particles.push({
       x, y, vx: 0, vy: 0,
       fx: 0, fy: 0,
@@ -247,47 +247,28 @@ function integrate(dt) {
   }
 }
 
-// ============ 边界：半圆碗（开口朝上） ============
-// 碗心 CY 在上方，弧是下半圆（0→PI），粒子被约束在弧内
+// ============ 边界：密封球体 ============
+// 粒子被约束在完整圆内，360° 反射
 function enforceBoundary() {
-  const bowlTop = CY; // 碗口 y 坐标（圆心高度）
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
     const dx = p.x - CX;
-    const dy = p.y - CY; // 正值 = 在圆心下方 = 碗内
+    const dy = p.y - CY;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    // 粒子在碗壁弧范围内（dy > 0 即在圆心下方 = 碗壁区域）
-    if (dy >= 0) {
-      if (dist > BR - PARTICLE_R) {
-        const nx = dx / dist;
-        const ny = dy / dist;
-        p.x = CX + nx * (BR - PARTICLE_R);
-        p.y = CY + ny * (BR - PARTICLE_R);
-        const vn = p.vx * nx + p.vy * ny;
-        if (vn > 0) {
-          p.vx -= (1 + DAMPING) * vn * nx;
-          p.vy -= (1 + DAMPING) * vn * ny;
-        }
-      }
-    } else {
-      // 粒子在碗口上方（dy < 0）— 开口区域，没有弧壁
-      // 只约束水平范围：如果超出碗口宽度则反弹回来
-      const halfWidth = BR;
-      if (dx < -(halfWidth - PARTICLE_R)) {
-        p.x = CX - halfWidth + PARTICLE_R;
-        p.vx *= -DAMPING;
-      } else if (dx > halfWidth - PARTICLE_R) {
-        p.x = CX + halfWidth - PARTICLE_R;
-        p.vx *= -DAMPING;
+    // 超出球体边界则反射回内壁
+    if (dist > BR - PARTICLE_R) {
+      const nx = dx / Math.max(dist, 0.001);
+      const ny = dy / Math.max(dist, 0.001);
+      p.x = CX + nx * (BR - PARTICLE_R);
+      p.y = CY + ny * (BR - PARTICLE_R);
+      // 反射速度：沿法线反弹
+      const vn = p.vx * nx + p.vy * ny;
+      if (vn > 0) {
+        p.vx -= (1 + DAMPING) * vn * nx;
+        p.vy -= (1 + DAMPING) * vn * ny;
       }
     }
-
-    // 画布边界
-    if (p.x < PARTICLE_R) { p.x = PARTICLE_R; p.vx *= -DAMPING; }
-    if (p.x > W - PARTICLE_R) { p.x = W - PARTICLE_R; p.vx *= -DAMPING; }
-    if (p.y < PARTICLE_R) { p.y = PARTICLE_R; p.vy *= -DAMPING; }
-    if (p.y > H - PARTICLE_R) { p.y = H - PARTICLE_R; p.vy *= -DAMPING; }
   }
 }
 
@@ -374,27 +355,26 @@ function applyMouseForce() {
 // ============ 渲染 ============
 function drawBowl() {
   ctx.save();
-  // 碗壁 — 下半圆弧（0→PI），开口朝上
+  // 球体壁 — 完整圆形
   ctx.beginPath();
-  ctx.arc(CX, CY, BR, 0, Math.PI, false);
+  ctx.arc(CX, CY, BR, 0, Math.PI * 2, false);
   ctx.strokeStyle = 'rgba(150, 180, 220, 0.6)';
   ctx.lineWidth = 4;
   ctx.stroke();
 
-  // 碗壁内发光
+  // 球壁内发光
   ctx.beginPath();
-  ctx.arc(CX, CY, BR - 2, 0, Math.PI, false);
-  ctx.strokeStyle = 'rgba(100, 150, 255, 0.15)';
+  ctx.arc(CX, CY, BR - 2, 0, Math.PI * 2, false);
+  ctx.strokeStyle = 'rgba(100, 150, 255, 0.12)';
   ctx.lineWidth = 8;
   ctx.stroke();
 
-  // 碗口装饰线
+  // 球体玻璃高光
   ctx.beginPath();
-  ctx.moveTo(CX - BR, CY);
-  ctx.lineTo(CX + BR, CY);
-  ctx.strokeStyle = 'rgba(150, 180, 220, 0.25)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  ctx.arc(CX - BR * 0.25, CY - BR * 0.25, BR * 0.15, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(200, 220, 255, 0.06)';
+  ctx.fill();
+
   ctx.restore();
 }
 
