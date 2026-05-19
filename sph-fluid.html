@@ -55,6 +55,18 @@ canvas{border-radius:8px;box-shadow:0 0 30px rgba(0,100,255,0.3)}
       <label>粒子颜色</label>
       <input type="color" id="particleColor" value="#3c8cff" style="width:26px;height:22px;border:2px solid rgba(255,255,255,0.2);border-radius:4px;cursor:pointer;padding:0;background:0">
     </div>
+    <div class="row">
+      <label>背景</label>
+      <input type="color" id="bgColor" value="#111111" style="width:26px;height:22px;border:2px solid rgba(255,255,255,0.2);border-radius:4px;cursor:pointer;padding:0;background:0">
+    </div>
+    <div id="bgPresets" style="display:flex;gap:4px;margin-top:2px;flex-wrap:wrap">
+      <span class="bg-btn" data-color="#111111" style="width:18px;height:18px;border-radius:3px;background:#111;cursor:pointer;border:1px solid #444" title="深黑"></span>
+      <span class="bg-btn" data-color="#0a0a1e" style="width:18px;height:18px;border-radius:3px;background:#0a0a1e;cursor:pointer;border:1px solid #444" title="深蓝"></span>
+      <span class="bg-btn" data-color="#1a0a0a" style="width:18px;height:18px;border-radius:3px;background:#1a0a0a;cursor:pointer;border:1px solid #444" title="深红"></span>
+      <span class="bg-btn" data-color="#0a1a0a" style="width:18px;height:18px;border-radius:3px;background:#0a1a0a;cursor:pointer;border:1px solid #444" title="深绿"></span>
+      <span class="bg-btn" data-color="#1a1a1a" style="width:18px;height:18px;border-radius:3px;background:#1a1a1a;cursor:pointer;border:1px solid #444" title="炭灰"></span>
+      <span class="bg-btn" data-color="#f0ece4" style="width:18px;height:18px;border-radius:3px;background:#f0ece4;cursor:pointer;border:1px solid #aaa" title="米白"></span>
+    </div>
   </div>
 </div>
 <div id="algo">
@@ -583,7 +595,7 @@ function render(timestamp) {
   step();
 
   // 绘制
-  ctx.fillStyle = '#0a0e1a';
+  ctx.fillStyle = BG_COLOR;
   ctx.fillRect(0, 0, W, H);
 
   drawBowl();
@@ -670,6 +682,21 @@ viscSlider.addEventListener('input', () => {
 // 粒子颜色
 document.getElementById('particleColor').addEventListener('input', (e) => {
   FLUID_COLOR = hexToRgb(e.target.value);
+});
+
+// 背景颜色
+let BG_COLOR = '#111111';
+const canvasEl = document.getElementById('c');
+function setBgColor(hex) {
+  BG_COLOR = hex;
+  document.body.style.background = hex;
+  document.getElementById('bgColor').value = hex;
+}
+document.getElementById('bgColor').addEventListener('input', (e) => {
+  setBgColor(e.target.value);
+});
+document.querySelectorAll('.bg-btn').forEach(btn => {
+  btn.addEventListener('click', () => setBgColor(btn.dataset.color));
 });
 
 // ============ 启动 ============
