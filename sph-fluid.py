@@ -229,6 +229,8 @@ class SPHApp:
         self.root.configure(bg='#111')
         self.root.resizable(False, False)
 
+        self.bg_color = '#111111'
+
         # 控制面板
         ctrl = tk.Frame(self.root, bg='#0a0e1a', padx=10, pady=8)
         ctrl.pack(side=tk.TOP, fill=tk.X)
@@ -260,6 +262,15 @@ class SPHApp:
                               showvalue=False)
         visc_scale.pack(side=tk.LEFT, padx=(0, 15))
 
+        tk.Label(ctrl, text="背景:", fg='#999', bg='#0a0e1a',
+                 font=('Consolas', 10)).pack(side=tk.LEFT)
+        bg_presets = [('#111111', '深黑'), ('#0a0a1e', '深蓝'), ('#1a0a0a', '深红'),
+                      ('#0a1a0a', '深绿'), ('#1a1a1a', '炭灰'), ('#f0ece4', '米白')]
+        for color, tip in bg_presets:
+            btn = tk.Button(ctrl, bg=color, width=2, height=1, relief=tk.FLAT,
+                            command=lambda c=color: self._set_bg(c))
+            btn.pack(side=tk.LEFT, padx=1)
+
         tk.Label(ctrl, text="粒子:", fg='#999', bg='#0a0e1a',
                  font=('Consolas', 10)).pack(side=tk.LEFT)
         self.fps_label = tk.Label(ctrl, text="FPS: --", fg='#666', bg='#0a0e1a',
@@ -267,7 +278,7 @@ class SPHApp:
         self.fps_label.pack(side=tk.RIGHT)
 
         # 画布
-        self.canvas = tk.Canvas(self.root, width=W, height=H, bg='#0a0e1a',
+        self.canvas = tk.Canvas(self.root, width=W, height=H, bg=self.bg_color,
                                 highlightthickness=0)
         self.canvas.pack()
 
@@ -321,6 +332,10 @@ class SPHApp:
         global FLUID_VISC
         FLUID_VISC = int(val)
         self.visc_label.config(text=str(FLUID_VISC))
+
+    def _set_bg(self, color):
+        self.bg_color = color
+        self.canvas.configure(bg=color)
 
     def _on_press(self, e):
         global mouse_down, mouse_x, mouse_y, prev_mx, prev_my
